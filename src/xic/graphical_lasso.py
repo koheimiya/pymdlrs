@@ -40,13 +40,13 @@ class GraphicalLassoXIC(GraphicalLasso, EquipCallbackOnSelf, metaclass=ABCMeta):
     def fit(self, n: int, corr: ndarray) -> 'GraphicalLassoXIC':
         rho_min = max(1e-15, self.rho_min)
         rho_max = self.rho_max
-        num_grid = 1 + int(np.log2(rho_max) - np.log2(rho_min))
+        num_grid = 1 + 4 * int(np.log2(rho_max) - np.log2(rho_min))
         rhos = np.exp(np.linspace(start=np.log(rho_min), stop=np.log(rho_max), num=num_grid))
 
         self._criteria = []
         theta = sigma = np.eye(corr.shape[1])
         self._criterion = np.inf
-        for rho in (list(rhos))[::]:  # in the ascending order of rho for computational efficiency
+        for rho in (list(rhos))[::-1]:  # in the ascending order of rho for computational efficiency
             rho = float(rho)
             sigma, theta = self.fit_glasso(corr, rho, sigma, theta)
             crt = self.compute_criterion(n, corr, theta, sigma)
@@ -62,7 +62,6 @@ class GraphicalLassoXIC(GraphicalLasso, EquipCallbackOnSelf, metaclass=ABCMeta):
     def fit_glasso(self, emp_corr: ndarray, rho: float, sigma: ndarray, theta: ndarray):
         m = emp_corr.shape[0]
         gamma = rho * np.ones_like(emp_corr)
-        gamma.flat[::m + 1] = 0
         res = glasso(emp_corr, gamma, sigma, theta, self.tol, self.n_iter, self.verbose, self.eps)
         if not res.converged:
             warnings.warn('fit_glasso: did not converge after %i iteration:'
