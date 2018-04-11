@@ -101,5 +101,8 @@ ENV/
 .mypy_cache/
 
 /memory*
-/tmp
+/tmp*
+/asset
 *.pdf
+
+/.idea

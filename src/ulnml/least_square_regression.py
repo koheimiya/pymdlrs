@@ -1,6 +1,7 @@
 from itertools import count
 import numpy as np
 from numpy import ndarray
+import scipy.linalg as linalg
 from typing import Union, Tuple
 import warnings
 
@@ -11,7 +12,6 @@ from sklearn.linear_model import Ridge
 
 from ..common.lasso import lasso_hetero, soft_threshold
 from ..common.object import Numeric, Learner
-
 
 
 class RidgeULNML(Learner, BaseEstimator):
@@ -95,7 +95,7 @@ class RidgeULNML(Learner, BaseEstimator):
     def objective(C: ndarray, X: ndarray, y: ndarray, beta: ndarray, sigma2: float, lam: ndarray):
         n = len(y)
         fg = 0.5 / sigma2 * (np.mean((y - X @ beta) ** 2) + np.sum(lam * beta ** 2)) + 0.5 * np.log(2 * np.pi * sigma2)
-        logZ = 0.5 * (np.log(np.linalg.det(C + np.diag(lam)) - np.sum(np.log(lam)))) / n
+        logZ = 0.5 * (np.log(linalg.det(C + np.diag(lam)) - np.sum(np.log(lam)))) / n
         return fg + logZ
 
     @staticmethod
@@ -103,13 +103,13 @@ class RidgeULNML(Learner, BaseEstimator):
                  beta: ndarray, sigma2: float, lam: ndarray, lam_bound: Tuple[float, float]):
         dbeta = 1 / sigma2 * (C @ beta - b + lam * beta)
         dsigma2 = -0.5 / sigma2 ** 2 * (np.mean((y - X @ beta) ** 2) + np.sum(lam * beta ** 2)) + 0.5 / sigma2
-        dlam = 0.5 * beta ** 2 / sigma2 + 0.5 * np.diag(np.linalg.inv(C + np.diag(lam))) / n - 0.5 / lam / n
+        dlam = 0.5 * beta ** 2 / sigma2 + 0.5 * np.diag(linalg.inv(C + np.diag(lam))) / n - 0.5 / lam / n
         at_boundary = ((lam == lam_bound[0]) * (dlam > 0)) + ((lam == lam_bound[1]) * (dlam < 0))
         return dbeta, dsigma2, dlam * ~at_boundary
 
     @staticmethod
     def fit_beta(C: ndarray, b: ndarray, lam: ndarray) -> ndarray:
-        beta: ndarray = np.linalg.solve(C + np.diag(lam), b)
+        beta: ndarray = linalg.solve(C + np.diag(lam), b)
         return beta
 
     @staticmethod
@@ -121,6 +121,6 @@ class RidgeULNML(Learner, BaseEstimator):
                 ) -> ndarray:
         lam_min, lam_max = lam_bound
         b2hat = beta ** 2 / sigma2
-        diag_H_inv = np.diag(np.linalg.inv(C + np.diag(lam0)))
+        diag_H_inv = np.diag(linalg.inv(C + np.diag(lam0)))
         lam1 = 1 / np.clip(n * b2hat + diag_H_inv, 1 / lam_max, 1 / lam_min)
         return lam1
