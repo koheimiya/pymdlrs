@@ -5,7 +5,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib as jl
 import warnings
-from sklearn.model_selection import learning_curve as learning_curve
+import time
+import datetime
+from sklearn.model_selection import learning_curve as _learning_curve
 from sklearn.linear_model import ARDRegression
 from src.ulnml.least_square_regression import RidgeULNML
 from src.gridsearch.least_square_regression import RidgeRandomSearch
@@ -13,9 +15,21 @@ from src.gridsearch.least_square_regression import RidgeCVProb as RidgeCV, Lasso
 
 
 memory = jl.Memory(cachedir="tmp", verbose=False)
+learning_curve = memory.cache(_learning_curve)
 
 
-def rmse(y, pred):
+def get_print_diff():
+    offset = time.time()
+    def print_diff():
+        nonlocal offset
+        diff = datetime.timedelta(seconds=int(time.time() - offset))
+        offset = time.time()
+        print(" ... (took {}).".format(diff))
+    return print_diff
+
+
+def rmse(estimator, X, y):
+    pred = estimator.predict(X)
     return np.mean((y - pred) ** 2) ** 0.5
 
 
@@ -114,14 +128,15 @@ def run_and_plot(X, y, ylabel, scoring, num_train=10000):
     alphas = 10.0 ** np.arange(-4, 0, 20)
     cv = 5
     configs = [
-            ("ridge+CV", {"estimator": RidgeCV(alphas=alphas, cv=cv), "color": "r", "style": "o:"}),
-            ("lasso+CV", {"estimator": LassoCV(alphas=alphas, cv=cv), "color": "b", "style": "+:"}),
+            ("ridge+CV", {"estimator": RidgeCV(alphas=alphas, cv=cv, scoring=scoring), "color": "r", "style": "o:"}),
+            ("lasso+CV", {"estimator": LassoCV(alphas=alphas, cv=cv, scoring=scoring), "color": "b", "style": "+:"}),
             ("RandomSearch", {"estimator": RidgeRandomSearch(lam_min=1e-4, lam_max=1, num_grid=20, random_state=420), "color": "k", "style": "x:"}),
             ("RVM", {"estimator": ARDRegression(), "color": "g", "style": "d:"}),
-            ("MDL-RS", {"estimator": RidgeULNML(fit_intercept=False, n_iters=10000), "color": "m", "style": "s-."}),
+            ("MDL-RS", {"estimator": RidgeULNML(fit_intercept=False, n_iter=10000), "color": "m", "style": "s-."}),
             ]
 
     for key, args in configs:
+        print("running {} ..".format(key))
         plot_learning_curve(
             title=key, X=X, y=y,
             ylim=ylim, scoring=scoring,

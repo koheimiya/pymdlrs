@@ -7,9 +7,8 @@ from itertools import chain
 from toolz import functoolz as fz
 
 from sklearn.base import BaseEstimator, clone
-from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LassoCV, RidgeCV
-from sklearn.model_selection import ShuffleSplit
+from sklearn.model_selection import ShuffleSplit, GridSearchCV
 
 from ..common.lasso import lasso_hetero, soft_threshold
 from ..common.object import Numeric, Learner, RNG
@@ -95,7 +94,7 @@ class RandomSearch(Learner, BaseEstimator):
 
 class RidgeRegression(BaseEstimator, Learner):
 
-    def __init__(self, lam: float=1e-2, fit_intercept=True):
+    def __init__(self, lam: ndarray=1e-2, fit_intercept=True):
         self.lam = lam
         self.fit_intercept = fit_intercept
 
