@@ -6,93 +6,17 @@ from itertools import chain
 
 from toolz import functoolz as fz
 
+from scipy import stats
+
 from sklearn.base import BaseEstimator, clone
-from sklearn.linear_model import LassoCV, RidgeCV
-from sklearn.model_selection import ShuffleSplit, GridSearchCV
+from sklearn.linear_model import LassoCV, RidgeCV, Lasso, Ridge
+from sklearn.model_selection import ShuffleSplit, GridSearchCV, RandomizedSearchCV
 
 from ..common.lasso import lasso_hetero, soft_threshold
 from ..common.object import Numeric, Learner, RNG
 
 
-class RandomSearch(Learner, BaseEstimator):
-
-    def __init__(
-            self, estimator: BaseEstimator, cost_fn: Callable[[ndarray, ndarray], float],
-            setter: Callable[[BaseEstimator, ndarray], None], lam_min: float=1e-8, lam_max: float=1,
-            num_grid: int=100, num_cv: int=5, random_state=None):
-        self.estimator = estimator
-        self.cost_fn = cost_fn
-        self.lam_min = lam_min
-        self.lam_max = lam_max
-        self.num_grid = num_grid
-        self.num_cv = num_cv
-        if random_state is None:
-            random_state = RNG(None)
-        elif isinstance(random_state, int):
-            random_state = RNG(random_state)
-        self.random_state = random_state
-
-    def draw_lam(self, m: int, rng: RNG) -> ndarray:
-        low = np.log(self.lam_min)
-        high = np.log(self.lam_max)
-        log = rng.uniform(low, high, size=m)
-        return np.exp(log)
-
-    def uniform_lams(self, m: int, num: int):
-        low = self.lam_min
-        high = self.lam_max
-        for l in np.linspace(np.log(low), np.log(high)):
-            yield np.exp(l) * np.ones(m)
-
-    def get_cost(
-            self, lam: ndarray, X: ndarray, y: ndarray, splits: List[List[int]]
-    ) -> float:
-        estimator = clone(self.estimator)
-        estimator.set_lam(lam)
-        costs = []
-        for train_index, test_index in splits:
-            estimator.fit(X[train_index], y[train_index])
-            pred = estimator.predict(X[test_index])
-            costs.append(
-                self.cost_fn(y[test_index], pred)
-            )
-        return np.mean(costs)
-
-    def fit(self, X: ndarray, y: ndarray) -> 'RidgeGridSearch':
-
-        n, m = X.shape
-
-        splits = list(ShuffleSplit(
-            n_splits=self.num_cv, test_size=1 / self.num_cv,
-            random_state=self.random_state
-        ).split(X))
-
-        grid_lam: [[float]] = chain(
-                self.uniform_lams(m, self.num_grid // 2),
-                (self.draw_lam(m, self.random_state) for _ in range(self.num_grid // 2))
-                )
-        cost_, self.lam_ = min(
-            (self.get_cost(lam, X, y, splits), lam)
-            for lam in grid_lam)
-
-        estimator = clone(self.estimator)
-        estimator.set_lam(self.lam_)
-        estimator.fit(X, y)
-        self.chosen_ = estimator
-        self.beta_ = self.chosen_.beta_
-        self.sigma2_ = self.chosen_.sigma2_
-
-        return self
-
-    def predict(self, X):
-        return self.chosen_.predict(X)
-
-    @property
-    def result(self) -> ndarray:
-        return self.chosen_.beta_
-
-
-class RidgeRegression(BaseEstimator, Learner):
+class FlexibleRidge(BaseEstimator, Learner):
 
     def __init__(self, lam: ndarray=1e-2, fit_intercept=True):
         self.lam = lam
@@ -100,10 +24,8 @@ class RidgeRegression(BaseEstimator, Learner):
 
         self.intercept_X_ = 0
         self.intercept_y_ = 0
-        self.beta_ = None
-        self.sigma2_ = None
 
-    def fit(self, X: ndarray, y: ndarray) -> 'RidgeRegression':
+    def fit(self, X: ndarray, y: ndarray) -> 'FlexibleRidge':
 
         if self.fit_intercept:
             self.intercept_X_ = np.mean(X, axis=0)
@@ -142,23 +64,7 @@ class RidgeRegression(BaseEstimator, Learner):
         return np.mean((y - X @ beta) ** 2)
 
 
-class RidgeRandomSearch(RandomSearch):
-    def __init__(
-            self, fit_intercept: bool = True, lam_min: float=1e-8, lam_max: float=1,
-            num_grid: int=100, num_cv: int=5, random_state=None):
-        estimator = RidgeRegression(lam=1, fit_intercept=fit_intercept)
-        RandomSearch.__init__(self, estimator, self.cost_fn, self.setter, lam_min, lam_max, num_grid, num_cv, random_state)
-
-    @staticmethod
-    def cost_fn(y, pred):
-        return np.sqrt(np.mean((y - pred) ** 2))
-
-    @staticmethod
-    def setter(estimator, lam):
-        estimator.set_lam(lam)
-
-
-class RidgeCVProb(RidgeCV):
+class RidgeCVProb(RidgeCV):  # XXX: duplicated
 
     @wraps(RidgeCV.__init__)
     def __init__(self, *args, **kwargs):
@@ -170,7 +76,7 @@ class RidgeCVProb(RidgeCV):
         self.sigma2_ = np.mean((y - pred) ** 2)
 
 
-class LassoCVProb(LassoCV):
+class LassoCVProb(LassoCV):  # XXX: duplicated
 
     @wraps(LassoCV.__init__)
     def __init__(self, *args, **kwargs):
@@ -180,3 +86,122 @@ class LassoCVProb(LassoCV):
         LassoCV.fit(self, X, y)
         pred = self.predict(X)
         self.sigma2_ = np.mean((y - pred) ** 2)
+
+
+class RidgeProb(Ridge):
+
+    def __init__(self, lam: float=1.0, fit_intercept=True):
+        self.lam = lam
+        super().__init__(alpha=lam, fit_intercept=fit_intercept)
+
+    def fit(self, X, y):
+        self.alpha = self.lam
+        Ridge.fit(self, X, y)
+        pred = self.predict(X)
+        self.sigma2_ = np.mean((y - pred) ** 2)
+
+
+class LassoProb(Lasso):
+
+    def __init__(self, lam: float=1.0, fit_intercept=True):
+        self.lam = lam
+        super().__init__(alpha=lam, fit_intercept=fit_intercept)
+
+    def fit(self, X, y):
+        self.alpha = self.lam
+        Lasso.fit(self, X, y)
+        pred = self.predict(X)
+        self.sigma2_ = np.mean((y - pred) ** 2)
+
+
+class FlexibleRidgeRandomCV(BaseEstimator):
+
+    def __init__(
+            self, lam_min, lam_max,
+            scoring=None, n_iter=100,
+            cv=5, random_state=None,
+            fit_intercept=True):
+        if random_state is None:
+            random_state = RNG(42)
+
+        self.lam_min = lam_min
+        self.lam_max = lam_max
+        self.scoring = scoring
+        self.n_iter = n_iter
+        self.cv = cv
+        self.random_state = random_state
+        self.fit_intercept = fit_intercept
+
+    def fit(self, X: ndarray, y: ndarray) -> 'FlexibleRidgeRandomCV':
+
+        n, m = X.shape
+        self.clf_ = RandomizedSearchCV(
+                estimator=FlexibleRidge(fit_intercept=self.fit_intercept),
+                param_distributions={
+                    "lam": LogUniformDist(low=self.lam_min, high=self.lam_max, shape=(m, m))
+                    },
+                scoring=self.scoring,
+                n_iter=self.n_iter,
+                cv=self.cv,
+                random_state=self.random_state
+                )
+        self.clf_.fit(X, y)
+        self.sigma2_ = self.clf_.best_estimator_.sigma2_
+        # import pdb
+        # pdb.set_trace()
+        return self
+
+    def predict(self, X):
+        return self.clf_.predict(X)
+
+
+class LogUniformDist:
+
+    def __init__(self, low, high, shape, rng=None):
+        if rng is None:
+            rng = RNG(42)
+        self.low = low
+        self.high = high
+        self.shape = shape
+        self.rng = rng
+
+    def rvs(self, random_state=None) -> ndarray:
+        if random_state is None:
+            random_state = self.rng
+        logx = random_state.uniform(
+                low=np.log(self.low), high=np.log(self.high), size=self.shape)
+        return np.exp(logx)
+
+
+class GridCV(BaseEstimator):
+
+    def __init__(
+            self, estimator: "has sigma2_ attribute", lam_min, lam_max,
+            scoring=None, n_iter=100,
+            cv=5):
+        self.estimator = estimator
+        self.lam_min = lam_min
+        self.lam_max = lam_max
+        self.scoring = scoring
+        self.n_iter = n_iter
+        self.cv = cv
+
+    def fit(self, X: ndarray, y: ndarray) -> 'GridCV':
+
+        grid = np.exp(
+                np.linspace(np.log(self.lam_min), np.log(self.lam_max), self.n_iter)
+                )
+        self.clf_ = GridSearchCV(
+                estimator=self.estimator,
+                param_grid={"lam": grid},
+                scoring=self.scoring,
+                cv=self.cv,
+                )
+        self.clf_.fit(X, y)
+        self.sigma2_ = self.clf_.best_estimator_.sigma2_
+        # import pdb
+        # pdb.set_trace()
+        return self
+
+    def predict(self, X):
+        return self.clf_.predict(X)

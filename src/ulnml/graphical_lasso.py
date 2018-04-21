@@ -58,8 +58,8 @@ class GraphicalURSC(GraphicalLasso):
             np.clip(self.lam, self.lam_min, self.lam_max, out=self.lam)
 
         C, self.scale = self.split_scale(emp_cov)
-        self.__eig_max = np.linalg.eigvalsh(C)[-1]
-
+        # self.__eig_max = np.linalg.eigvalsh(C)[-1]
+        self.__eig_max = np.max(np.sum(abs(C), axis=-1))
         # code_length = np.inf
         for i in range(self.n_iter):
             self._fit_theta_sigma(C, self.lam)
@@ -104,7 +104,7 @@ class GraphicalURSC(GraphicalLasso):
         if not self.adaptive:
             m = theta.shape[0] ** 2
         else:
-            m = self.__eig_max ** 2
+            m = self.__eig_max ** 2 / 2
         if self.hierarchical:
             t = m * n * theta ** 2 / (1 + 2 / (1 + plog(m / self.lam)) * (1 + 2 / (1 + plog(plog(m / self.lam)))))
         else:

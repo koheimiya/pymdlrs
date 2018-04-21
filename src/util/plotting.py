@@ -7,11 +7,15 @@ import joblib as jl
 import warnings
 import time
 import datetime
+import operator as op
+
 from sklearn.model_selection import learning_curve as _learning_curve
 from sklearn.linear_model import ARDRegression
 from src.ulnml.least_square_regression import RidgeULNML
-from src.gridsearch.least_square_regression import RidgeRandomSearch
-from src.gridsearch.least_square_regression import RidgeCVProb as RidgeCV, LassoCVProb as LassoCV
+
+from toolz import compose
+
+import src.gridsearch.least_square_regression as gs
 
 
 memory = jl.Memory(cachedir="tmp", verbose=False)
@@ -46,13 +50,10 @@ def logloss(estimator, X, y):
 
 def get_sigma2(estimator):
     e = estimator
-    if isinstance(e, (RidgeULNML, RidgeRandomSearch)):
-        return e.sigma2_
-    if isinstance(e, (RidgeCV, LassoCV)):
-        return e.sigma2_
     if isinstance(e, ARDRegression):
         return 1 / e.alpha_
-    raise ValueError("Unsupported type: {}".format(type(estimator)))
+    else:
+        return e.sigma2_
 
 
 def plot_learning_curve(estimator, title, X, y, ylim=None, cv=5, scoring=rmse,
@@ -113,11 +114,10 @@ def plot_learning_curve(estimator, title, X, y, ylim=None, cv=5, scoring=rmse,
     return plt
 
 
-def run_and_plot(X, y, ylabel, scoring, num_train=10000):
+def run_and_plot(X, y, ylabel, scoring, max_train_size=10000, n_jobs=-1):
     n = X.shape[0]
     ylim = None
-    n_jobs = -1
-    train_sizes = min(1, num_train / n) * 5. ** np.linspace(-1, 0, 10)
+    train_sizes = min(1, max_train_size / n) * 5. ** np.linspace(-1, 0, 10)
 
     plt.grid()
     plt.xlabel("Training samples")
@@ -125,13 +125,32 @@ def run_and_plot(X, y, ylabel, scoring, num_train=10000):
     if ylim is not None:
         plt.ylim(*ylim)
 
-    alphas = 10.0 ** np.arange(-4, 0, 20)
+    lam_min = 1e-4
+    lam_max = 1.0
+    n_grid = 20
+    n_iter = 100
     cv = 5
+    scoring_pos = compose(op.neg, scoring)
     configs = [
-            ("ridge+CV", {"estimator": RidgeCV(alphas=alphas, cv=cv, scoring=scoring), "color": "r", "style": "o:"}),
-            ("lasso+CV", {"estimator": LassoCV(alphas=alphas, cv=cv, scoring=scoring), "color": "b", "style": "+:"}),
-            ("RandomSearch", {"estimator": RidgeRandomSearch(lam_min=1e-4, lam_max=1, num_grid=20, random_state=420), "color": "k", "style": "x:"}),
-            ("RVM", {"estimator": ARDRegression(), "color": "g", "style": "d:"}),
+            ("ridge+CV", {
+                "estimator": gs.GridCV(
+                    estimator=gs.RidgeProb(fit_intercept=True),
+                    lam_min=lam_min, lam_max=lam_max,
+                    scoring=scoring_pos, n_iter=n_grid, cv=cv),
+                "color": "r", "style": "o:"}),
+            ("lasso+CV", {
+                "estimator": gs.GridCV(
+                    estimator=gs.LassoProb(fit_intercept=True),
+                    lam_min=lam_min, lam_max=lam_max,
+                    scoring=scoring_pos, n_iter=n_grid, cv=cv),
+                "color": "b", "style": "+:"}),
+            ("RandomSearch", {"estimator":
+                gs.FlexibleRidgeRandomCV(
+                    lam_min=lam_min, lam_max=lam_max, fit_intercept=True,
+                    scoring=scoring_pos, cv=cv,
+                    n_iter=n_iter, random_state=420),
+                "color": "k", "style": "x:"}),
+            ("RVM", {"estimator": ARDRegression(fit_intercept=True), "color": "g", "style": "d:"}),
             ("MDL-RS", {"estimator": RidgeULNML(fit_intercept=False, n_iter=10000), "color": "m", "style": "s-."}),
             ]
 

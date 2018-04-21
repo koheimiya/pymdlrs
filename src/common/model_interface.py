@@ -1,4 +1,4 @@
-from pyrsc.common.object import Learner
+from .object import Learner
 from numpy import ndarray
 from abc import abstractmethod, ABCMeta
 
